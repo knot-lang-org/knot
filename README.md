@@ -37,6 +37,7 @@ Create an `app.knot` file next to it:
 ```ini
 # Application configuration
 @import db: "./database.knot"
+@import env: environment
 
 [app]
 name: My Application
@@ -622,25 +623,47 @@ Resolved configuration:
 - Imports must appear before root properties and the first section header.
 - Relative paths are resolved from the directory containing the importing file.
 - Each import name must be unique within a file and cannot share a name with a root property or top-level section in that file.
-- `env` is reserved and cannot be used as an import name.
+- `@import name: environment` imports environment variables instead of a file. A file may have at most one environment import. See [Environment Variables](#environment-variables).
 - References resolve against the file they are written in. If `database.knot` contains `@defaults.host`, it resolves against the sections of `database.knot`, not the file that imported it.
 - Imports are not transitive. If `database.knot` imports `shared.knot`, `app.knot` must import `shared.knot` itself to reference it.
 - Two files may import each other. Only circular reference chains are errors.
 
 ## Environment Variables
 
-`@env.NAME` reads the environment variable `NAME`.
+A file reads environment variables by importing the environment under a name. By convention the name is `env`:
 
 ```ini
+@import env: environment
+
 [database]
 host: @env.DB_HOST
 password: @env.DB_PASSWORD
 ```
 
-- Environment access is disabled by default. The application or `knot validate` must enable it. Referencing `@env` while it is disabled is an error.
+`environment` without quotes is a keyword, not a file path. `@env.NAME` then reads the environment variable `NAME`.
+
+- Each file that reads environment variables must import the environment itself, because imports are not transitive. Reviewers and tools can find every file that reads the environment by checking its imports.
+- Environment access is also disabled by default in the resolver. The application or `knot validate` must enable it. Resolving a reference through an environment import while access is disabled is an error.
 - An unset variable is a reference error, unless the reference has a default.
-- `env` is a reserved root. A file cannot declare a root property, top-level section, or import named `env`.
 - Names that aren't valid bare keys are quoted, like any reference path: `@env."my.var"`.
+
+### Choosing the Import Name
+
+The import name is up to the file. This document uses `env`, because `@env.PORT` is what most people expect to read.
+
+Use `sysenv` instead of `env` when a file has its own `[env]` section. An import name cannot match a top-level section, so `@import env: environment` and `[env]` in the same file is an error. Importing the environment as `sysenv` leaves `env` free for the section:
+
+```ini
+@import sysenv: environment
+
+[env]
+name: production
+
+[server]
+port: @sysenv.PORT:int ?? 8080
+```
+
+This is also why the environment is an import rather than a built-in `@env` root. A built-in name would make `[env]` sections impossible. As an import, the file picks a name that doesn't clash.
 
 ### Type Annotations
 
@@ -677,7 +700,7 @@ Conversion rules:
 - A value that does not convert is a reference error. The error names the variable and the expected type but does not print the value, because environment variables often hold secrets.
 - There are no spaces around the colon. `@env.PORT : int` is a syntax error.
 - An unknown type name such as `:integer` is a syntax error that lists the valid names.
-- Type annotations are allowed only on `@env` references. Internal references already carry their types, so `@app.workers:string` is a syntax error.
+- Type annotations are allowed only on references through an environment import. Internal references already carry their types, so `@app.workers:string` is a syntax error.
 
 ### Defaults
 
@@ -695,12 +718,15 @@ timeout: @env.TIMEOUT:int ?? @defaults.timeout
 - The default is used only when the variable is unset. A variable set to an empty string counts as set, so `PORT=` with `:int` is a conversion error.
 - The default may be any value, including a reference, as long as it matches the declared type. `@env.PORT:int ?? "8080"` is an error.
 - Without an annotation the type is `string`, so the default must be a string: `@env.HOST ?? localhost`.
-- `??` is allowed only after `@env` references.
+- `??` is allowed only on references through an environment import.
 
 ### Grammar
 
 ```abnf
-env-reference = "@env." env-name [":" env-type] [*WSP "??" *WSP default]
+env-import    = "@import" 1*WSP import-name ":" *WSP "environment"
+env-reference = "@" import-name "." env-name [":" env-type] [*WSP "??" *WSP default]
+                                         ; import-name must name an environment import
+import-name   = bare-key
 env-name      = bare-key / quoted-key
 env-type      = "string" / "int" / "float" / "bool"
               / "offset-date-time" / "local-date-time"
@@ -1007,6 +1033,8 @@ Location: config/app.knot:2
 Invalid, with `PORT=80a0`:
 
 ```ini
+@import env: environment
+
 [server]
 port: @env.PORT:int
 ```
@@ -1018,7 +1046,7 @@ KnotReferenceError: Environment variable does not match its type
 
 Variable: PORT
 Expected: int
-Location: config/app.knot:2
+Location: config/app.knot:4
 ```
 
 ### Unknown Type Annotations
@@ -1026,6 +1054,8 @@ Location: config/app.knot:2
 Invalid:
 
 ```ini
+@import env: environment
+
 [server]
 port: @env.PORT:integer
 ```
@@ -1036,7 +1066,27 @@ Error:
 KnotSyntaxError: Unknown type "integer"
 
 Valid types: string, int, float, bool, offset-date-time, local-date-time, local-date, local-time, json
-Location: config/app.knot:2
+Location: config/app.knot:4
+```
+
+### Import Name Conflicts
+
+Invalid:
+
+```ini
+@import env: environment
+
+[env]
+name: production
+```
+
+Error:
+
+```text
+KnotSyntaxError: Import name "env" conflicts with section "env"
+
+Hint: Import the environment under another name, such as "sysenv".
+Location: config/app.knot:1
 ```
 
 ---
@@ -1161,7 +1211,7 @@ The syntax, reference model, and inheritance behavior described here represent t
 
 - [ ] Section inheritance
 - [ ] Configurable file access restrictions
-- [ ] Environment variables (`@env`)
+- [ ] Environment imports (`@import env: environment`)
 - [ ] Environment type annotations and defaults
 - [ ] Optional secret resolvers
 - [ ] Configuration schema validation
