@@ -11,7 +11,7 @@ Unlike traditional configuration languages, Knot treats references as first-clas
 - **Indentation-independent** — Whitespace is for readability, not structure.
 - **Section-based configuration** — Organize properties using `[section]` and `[section.subsection]`.
 - **Native JSON values** — Use arrays, objects, booleans, numbers, and `null`. Any valid JSON value is a valid Knot value.
-- **Native dates and times** — RFC 3339 date-times, dates, and times as typed values.
+- **Native dates and times** — Offset and local date-times, local dates, and local times as typed values.
 - **Unquoted strings** — No unnecessary quotation marks.
 - **Configuration pointers** — Reference properties and entire sections using `@`.
 - **Imports** — Import other `.knot` files and reference their sections and properties.
@@ -249,7 +249,7 @@ Hex, octal, `Infinity`, and `NaN` are not supported.
 
 ### Dates and Times
 
-Knot has four date and time types, written unquoted in [RFC 3339](https://www.rfc-editor.org/rfc/rfc3339) format. RFC 3339 is a strict profile of ISO 8601, so every Knot date is also a valid ISO 8601 date. ISO 8601 forms outside RFC 3339, such as `20261106` or `2026-W45`, are not supported because they collide with numbers.
+Knot has four date and time types, written unquoted. The model follows TOML: one type for exact instants and three local types with no time zone.
 
 ```ini
 [release]
@@ -260,26 +260,89 @@ released: 2026-11-06                    # local date
 backup_at: 02:30                        # local time
 ```
 
-| Type | Format | Meaning |
-|---|---|---|
-| Offset date-time | `YYYY-MM-DDTHH:MM[:SS[.fff]]Z` or `±HH:MM` | An exact instant |
-| Local date-time | `YYYY-MM-DDTHH:MM[:SS[.fff]]` | A date and time with no time zone; the application decides which zone applies |
-| Local date | `YYYY-MM-DD` | A calendar date |
-| Local time | `HH:MM[:SS[.fff]]` | A time of day |
+#### Offset Date-Time
 
-Rules:
+An exact instant: a date, a time, and a UTC offset.
 
-- The date and time are separated by an uppercase `T`. The UTC designator is an uppercase `Z`.
+```ini
+published: 2026-11-06T09:00:00Z
+announced: 2026-11-06T09:00:00.250-05:00
+```
+
+#### Local Date-Time
+
+A date and time with no offset. The application decides which time zone applies.
+
+```ini
+starts: 2026-11-06T09:00:00
+```
+
+#### Local Date
+
+A calendar date with no time.
+
+```ini
+released: 2026-11-06
+```
+
+#### Local Time
+
+A time of day with no date or offset.
+
+```ini
+backup_at: 02:30
+backup_end: 03:15:30.5
+```
+
+#### Grammar
+
+The four types are defined in [ABNF](https://www.rfc-editor.org/rfc/rfc5234). Rule names match [RFC 3339](https://www.rfc-editor.org/rfc/rfc3339) where the rule is the same.
+
+```abnf
+date-fullyear    = 4DIGIT
+date-month       = 2DIGIT                 ; 01-12
+date-mday        = 2DIGIT                 ; 01-28, 01-29, 01-30, 01-31 by month and year
+time-hour        = 2DIGIT                 ; 00-23
+time-minute      = 2DIGIT                 ; 00-59
+time-second      = 2DIGIT                 ; 00-59
+time-secfrac     = "." 1*DIGIT
+time-numoffset   = ("+" / "-") time-hour ":" time-minute
+time-offset      = "Z" / time-numoffset
+
+local-date       = date-fullyear "-" date-month "-" date-mday
+local-time       = time-hour ":" time-minute [":" time-second [time-secfrac]]
+local-date-time  = local-date "T" local-time
+offset-date-time = local-date-time time-offset
+```
+
+Additional rules:
+
+- `T` and `Z` are uppercase. Lowercase `t` and `z`, and a space in place of `T`, are not allowed.
 - Seconds are optional and default to `00`.
-- Fractional seconds are allowed. Implementations must keep at least millisecond precision and truncate anything beyond what they support.
-- Values must be real dates and times. `2026-02-30` and `25:00` are errors.
+- Fractional seconds are allowed only when seconds are present. Implementations must keep at least millisecond precision and truncate anything beyond what they support.
+- Days are checked against the month using the Gregorian calendar, including leap years. `2026-02-30` is an error.
+- Leap seconds (`:60`) are not supported.
+- The offset `-00:00` is not allowed. Use `Z` for UTC, or a local date-time when the offset is unknown.
 - Quoted values are strings. `"2026-11-06"` stays a string.
 - Dates and times are allowed unquoted inside inline objects and arrays: `holidays: [2026-01-01, 2026-07-04]`.
 - References preserve date and time types like any other type.
 
+#### Relationship to RFC 3339 and ISO 8601
+
+| Knot type | RFC 3339 | ISO 8601 |
+|---|---|---|
+| Offset date-time, with seconds | Valid `date-time` | Valid |
+| Offset date-time, without seconds | Not valid (RFC 3339 requires seconds) | Valid |
+| Local date-time | Not valid (RFC 3339 `date-time` requires an offset) | Valid |
+| Local date | Valid `full-date` | Valid |
+| Local time, with seconds | Valid `partial-time` | Valid |
+| Local time, without seconds | Not valid | Valid |
+
+Every Knot date and time is valid ISO 8601 extended format. Other ISO 8601 forms, such as the basic format `20261106`, week dates like `2026-W45-5`, and reduced precision like `2026-11`, are not supported, because several of them collide with numbers.
+
 ### Dates in JSON Output
 
-JSON has no date type. When resolved configuration is serialized to JSON, dates and times become RFC 3339 strings, normalized to include seconds:
+JSON has no date type. When resolved configuration is serialized to JSON, dates and times become strings in the formats above, normalized to include seconds. Offset date-times in JSON output are therefore always valid RFC 3339 `date-time` values.
 
 ```json
 {
