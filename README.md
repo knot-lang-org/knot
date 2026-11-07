@@ -298,6 +298,8 @@ backup_end: 03:15:30.5
 
 #### Grammar
 
+This grammar is for parser authors. The examples above and the rules below describe the same format.
+
 The four types are defined in [ABNF](https://www.rfc-editor.org/rfc/rfc5234). Rule names match [RFC 3339](https://www.rfc-editor.org/rfc/rfc3339) where the rule is the same.
 
 ```abnf
@@ -309,11 +311,11 @@ time-minute      = 2DIGIT                 ; 00-59
 time-second      = 2DIGIT                 ; 00-59
 time-secfrac     = "." 1*DIGIT
 time-numoffset   = ("+" / "-") time-hour ":" time-minute
-time-offset      = "Z" / time-numoffset
+time-offset      = %x5A / time-numoffset  ; uppercase "Z" only
 
 local-date       = date-fullyear "-" date-month "-" date-mday
 local-time       = time-hour ":" time-minute [":" time-second [time-secfrac]]
-local-date-time  = local-date "T" local-time
+local-date-time  = local-date %x54 local-time      ; uppercase "T" only
 offset-date-time = local-date-time time-offset
 ```
 
@@ -722,15 +724,17 @@ timeout: @env.TIMEOUT:int ?? @defaults.timeout
 
 ### Grammar
 
+This grammar is for parser authors. The examples and rules above describe the same syntax.
+
 ```abnf
-env-import    = "@import" 1*WSP import-name ":" *WSP "environment"
+env-import    = %s"@import" 1*WSP import-name ":" *WSP %s"environment"
 env-reference = "@" import-name "." env-name [":" env-type] [*WSP "??" *WSP default]
                                          ; import-name must name an environment import
 import-name   = bare-key
 env-name      = bare-key / quoted-key
-env-type      = "string" / "int" / "float" / "bool"
-              / "offset-date-time" / "local-date-time"
-              / "local-date" / "local-time" / "json"
+env-type      = %s"string" / %s"int" / %s"float" / %s"bool"
+              / %s"offset-date-time" / %s"local-date-time"
+              / %s"local-date" / %s"local-time" / %s"json"
 default       = value                    ; any Knot value or reference
 ```
 
