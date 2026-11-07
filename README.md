@@ -191,6 +191,7 @@ Knot supports JSON-compatible primitive and structured values.
 | Object | `options: {"timeout": 30}` |
 | Reference | `host: @database.host` |
 | Environment variable | `password: @env.DB_PASSWORD` |
+| Typed environment variable | `port: @env.PORT:int ?? 8080` |
 
 ### Unquoted Strings
 
@@ -637,9 +638,75 @@ password: @env.DB_PASSWORD
 ```
 
 - Environment access is disabled by default. The application or `knot validate` must enable it. Referencing `@env` while it is disabled is an error.
-- Values are always strings. `@env.PORT` resolves to `"8080"`, not `8080`.
-- An unset variable is a reference error.
+- An unset variable is a reference error, unless the reference has a default.
 - `env` is a reserved root. A file cannot declare a root property, top-level section, or import named `env`.
+- Names that aren't valid bare keys are quoted, like any reference path: `@env."my.var"`.
+
+### Type Annotations
+
+Environment variables are always strings. Without an annotation, `@env.PORT` resolves to `"8080"`, not `8080`.
+
+A type annotation after the name converts the value:
+
+```ini
+[server]
+port: @env.PORT:int
+debug: @env.DEBUG:bool
+ratio: @env.RATIO:float
+started: @env.STARTED:offset-date-time
+hosts: @env.HOSTS:json
+```
+
+| Type | Accepts | Example value |
+|---|---|---|
+| `string` | Any value, unchanged (the default) | `db.internal` |
+| `int` | A JSON integer: optional `-`, no leading zeros, no `_` | `8080` |
+| `float` | A JSON number | `0.75` |
+| `bool` | Exactly `true` or `false` | `true` |
+| `offset-date-time` | An offset date-time, as defined in [Dates and Times](#dates-and-times) | `2026-11-06T09:00:00Z` |
+| `local-date-time` | A local date-time | `2026-11-06T09:00:00` |
+| `local-date` | A local date | `2026-11-06` |
+| `local-time` | A local time | `09:00` |
+| `json` | A complete, standard JSON value | `["web1", "web2"]` |
+
+Conversion rules:
+
+- The whole value must match. Leading or trailing whitespace is an error, so ` 8080` and `8080 ` do not convert.
+- `bool` does not accept `1`, `0`, `yes`, `no`, or other casings such as `TRUE`.
+- `json` accepts standard JSON only, without Knot's extensions. References, comments, and trailing commas are errors.
+- A value that does not convert is a reference error. The error names the variable and the expected type but does not print the value, because environment variables often hold secrets.
+- There are no spaces around the colon. `@env.PORT : int` is a syntax error.
+- An unknown type name such as `:integer` is a syntax error that lists the valid names.
+- Type annotations are allowed only on `@env` references. Internal references already carry their types, so `@app.workers:string` is a syntax error.
+
+### Defaults
+
+`??` supplies a value to use when the variable is unset:
+
+```ini
+[server]
+host: @env.HOST ?? localhost
+port: @env.PORT:int ?? 8080
+debug: @env.DEBUG:bool ?? false
+replicas: @env.REPLICAS:json ?? ["replica1.internal", "replica2.internal"]
+timeout: @env.TIMEOUT:int ?? @defaults.timeout
+```
+
+- The default is used only when the variable is unset. A variable set to an empty string counts as set, so `PORT=` with `:int` is a conversion error.
+- The default may be any value, including a reference, as long as it matches the declared type. `@env.PORT:int ?? "8080"` is an error.
+- Without an annotation the type is `string`, so the default must be a string: `@env.HOST ?? localhost`.
+- `??` is allowed only after `@env` references.
+
+### Grammar
+
+```abnf
+env-reference = "@env." env-name [":" env-type] [*WSP "??" *WSP default]
+env-name      = bare-key / quoted-key
+env-type      = "string" / "int" / "float" / "bool"
+              / "offset-date-time" / "local-date-time"
+              / "local-date" / "local-time" / "json"
+default       = value                    ; any Knot value or reference
+```
 
 ---
 
@@ -935,6 +1002,43 @@ Hint: Strings inside inline objects and arrays must be quoted.
 Location: config/app.knot:2
 ```
 
+### Invalid Environment Values
+
+Invalid, with `PORT=80a0`:
+
+```ini
+[server]
+port: @env.PORT:int
+```
+
+Error:
+
+```text
+KnotReferenceError: Environment variable does not match its type
+
+Variable: PORT
+Expected: int
+Location: config/app.knot:2
+```
+
+### Unknown Type Annotations
+
+Invalid:
+
+```ini
+[server]
+port: @env.PORT:integer
+```
+
+Error:
+
+```text
+KnotSyntaxError: Unknown type "integer"
+
+Valid types: string, int, float, bool, offset-date-time, local-date-time, local-date, local-time, json
+Location: config/app.knot:2
+```
+
 ---
 
 # Security
@@ -1058,6 +1162,7 @@ The syntax, reference model, and inheritance behavior described here represent t
 - [ ] Section inheritance
 - [ ] Configurable file access restrictions
 - [ ] Environment variables (`@env`)
+- [ ] Environment type annotations and defaults
 - [ ] Optional secret resolvers
 - [ ] Configuration schema validation
 
