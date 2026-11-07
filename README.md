@@ -955,4 +955,4 @@ The initial focus is defining a predictable, portable language specification bef
 
 # License
 
-The specification text is licensed under [CC BY 4.0](https://creativecommons.org/licenses/by/4.0/). Reference implementations will be licensed under the [MIT License](https://opensource.org/licenses/MIT).
+The specification text is licensed under [CC BY 4.0](LICENSE). Reference implementations will be licensed under the [MIT License](https://opensource.org/licenses/MIT).
