@@ -11,6 +11,7 @@ Unlike traditional configuration languages, Knot treats references as first-clas
 - **Indentation-independent** — Whitespace is for readability, not structure.
 - **Section-based configuration** — Organize properties using `[section]` and `[section.subsection]`.
 - **Native JSON values** — Use arrays, objects, booleans, numbers, and `null`. Any valid JSON value is a valid Knot value.
+- **Native dates and times** — RFC 3339 date-times, dates, and times as typed values.
 - **Unquoted strings** — No unnecessary quotation marks.
 - **Configuration pointers** — Reference properties and entire sections using `@`.
 - **Imports** — Import other `.knot` files and reference their sections and properties.
@@ -182,6 +183,10 @@ Knot supports JSON-compatible primitive and structured values.
 | Float | `timeout: 1.5` |
 | Boolean | `enabled: true` |
 | Null | `password: null` |
+| Offset date-time | `published: 2026-11-06T09:00:00Z` |
+| Local date-time | `starts: 2026-11-06T09:00:00` |
+| Local date | `released: 2026-11-06` |
+| Local time | `backup_at: 02:30:00` |
 | Array | `ports: [80, 443]` |
 | Object | `options: {"timeout": 30}` |
 | Reference | `host: @database.host` |
@@ -195,7 +200,8 @@ Knot decides the type of an unquoted value from its first character:
 
 | Starts with | Parsed as | If it doesn't parse |
 |---|---|---|
-| A digit, `-`, `+`, or `.` | Number | Error |
+| A digit | Number, date, or time | Error |
+| `-`, `+`, or `.` | Number | Error |
 | `@` | Reference | Error |
 | `[` or `{` | Inline array or object | Error |
 | `"` | Quoted or multiline string | Error |
@@ -243,12 +249,49 @@ Hex, octal, `Infinity`, and `NaN` are not supported.
 
 ### Dates and Times
 
-Knot has no date type, because resolved configuration must stay valid JSON. Write dates as quoted ISO 8601 strings:
+Knot has four date and time types, written unquoted in [RFC 3339](https://www.rfc-editor.org/rfc/rfc3339) format. RFC 3339 is a strict profile of ISO 8601, so every Knot date is also a valid ISO 8601 date. ISO 8601 forms outside RFC 3339, such as `20261106` or `2026-W45`, are not supported because they collide with numbers.
 
 ```ini
 [release]
-published: "2026-11-06T09:00:00Z"
+published: 2026-11-06T09:00:00Z         # offset date-time
+announced: 2026-11-06T09:00:00-05:00    # offset date-time
+starts: 2026-11-06T09:00:00             # local date-time
+released: 2026-11-06                    # local date
+backup_at: 02:30                        # local time
 ```
+
+| Type | Format | Meaning |
+|---|---|---|
+| Offset date-time | `YYYY-MM-DDTHH:MM[:SS[.fff]]Z` or `±HH:MM` | An exact instant |
+| Local date-time | `YYYY-MM-DDTHH:MM[:SS[.fff]]` | A date and time with no time zone; the application decides which zone applies |
+| Local date | `YYYY-MM-DD` | A calendar date |
+| Local time | `HH:MM[:SS[.fff]]` | A time of day |
+
+Rules:
+
+- The date and time are separated by an uppercase `T`. The UTC designator is an uppercase `Z`.
+- Seconds are optional and default to `00`.
+- Fractional seconds are allowed. Implementations must keep at least millisecond precision and truncate anything beyond what they support.
+- Values must be real dates and times. `2026-02-30` and `25:00` are errors.
+- Quoted values are strings. `"2026-11-06"` stays a string.
+- Dates and times are allowed unquoted inside inline objects and arrays: `holidays: [2026-01-01, 2026-07-04]`.
+- References preserve date and time types like any other type.
+
+### Dates in JSON Output
+
+JSON has no date type. When resolved configuration is serialized to JSON, dates and times become RFC 3339 strings, normalized to include seconds:
+
+```json
+{
+    "release": {
+        "published": "2026-11-06T09:00:00Z",
+        "released": "2026-11-06",
+        "backup_at": "02:30:00"
+    }
+}
+```
+
+Library APIs return native date and time values. Only JSON serialization converts them to strings.
 
 ### Inline Objects and Arrays
 
@@ -267,9 +310,10 @@ options: {
 }
 ```
 
-Any valid JSON value is a valid inline value. Knot adds three things to JSON inside inline values:
+Any valid JSON value is a valid inline value. Knot adds four things to JSON inside inline values:
 
 - References as values
+- Unquoted dates and times
 - `#` comments
 - Trailing commas
 
@@ -754,6 +798,24 @@ Hint: Booleans and null are lowercase.
 Location: config/app.knot:3
 ```
 
+### Invalid Dates
+
+Invalid:
+
+```ini
+[release]
+published: 2026-02-30
+```
+
+Error:
+
+```text
+KnotSyntaxError: Invalid date "2026-02-30"
+
+Hint: February 2026 has 28 days.
+Location: config/app.knot:2
+```
+
 ### Invalid References
 
 Invalid:
@@ -841,11 +903,11 @@ Knot does not execute configuration values as code.
 | Unquoted strings | ✅ | ❌ | ✅ | ❌ | ✅ |
 | JSON-compatible values | ✅ | Partial | ✅ (1.2) | ✅ | ✅ |
 | Native null | ✅ | ❌ | ✅ | ✅ | ✅ |
-| Native dates | ❌ | ✅ | 1.1 only | ❌ | ❌ |
+| Native dates | ✅ | ✅ | 1.1 only | ❌ | ❌ |
 | Arrays of sections | ✅ | ✅ | ❌ | ❌ | ❌ |
 | Property references | ✅ | ❌ | Aliases | ❌ | ✅ |
 | Cross-file imports | ✅ | ❌ | ❌ | ❌ | ✅ |
-| Environment variables | Opt-in | ❌ | ❌ | ❌ | ✅ |
+| Environment variables | ✅ (opt-in) | ❌ | ❌ | ❌ | ✅ |
 | Inheritance | ✅ | ❌ | Merge keys (1.1) | ❌ | Object merging |
 | Duplicate keys are errors | ✅ | ✅ | Parser-dependent | Parser-dependent | ❌ (merged) |
 | Circular-reference detection | ✅ | N/A | Alias handling | N/A | ✅ |
@@ -908,6 +970,7 @@ The syntax, reference model, and inheritance behavior described here represent t
 - [ ] Formal grammar
 - [ ] Comments and unquoted-string rules
 - [ ] Scalar data types
+- [ ] Dates and times
 - [ ] Keys and quoted keys
 - [ ] Section headers and nested sections
 - [ ] Inline objects and arrays
